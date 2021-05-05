@@ -10,6 +10,7 @@ import (
 	"gopkg.in/yaml.v2"
 	"path/filepath"
 	"runtime"
+	"strconv"
 	"time"
 	"github.com/go-redis/redis/v8"
 	"golang.org/x/net/context"
@@ -125,7 +126,7 @@ func NewMikroticataLoop(config MikroticataConfig) error {
 		ec:         nil,
 		ctx:        context.Background(),
 		rdb:        redis.NewClient(&redis.Options{
-			Addr:     config.RedisHost + ":" + string(config.RedisPort),
+			Addr:     config.RedisHost + ":" + strconv.Itoa(config.RedisPort),
 			Password: config.RedisPassword,
 			DB:       config.RedisDB,
 		}),

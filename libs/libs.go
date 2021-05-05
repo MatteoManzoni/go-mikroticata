@@ -116,7 +116,7 @@ func ParseConfig(path string) (MikroticataConfig, error) {
 
 func retriveSuriAlerts(ctx context.Context, client *redis.Client, key string) string {
 	value := client.GetRange(ctx, key, 0, -1)
-	return value.String()
+	return value.Val()
 }
 
 func NewMikroticataLoop(config MikroticataConfig) error {

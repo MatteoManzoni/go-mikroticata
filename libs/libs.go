@@ -23,7 +23,7 @@ type MikroticataConfig struct {
 	WhitelistSources   []string  `yaml:"whitelistSources"`
 	WhitelistDests     []string  `yaml:"whitelistDests"`
 	WAN_IP             string    `yaml:"WAN_IP"`
-	EventPeriodSeconds int       `yaml:"eventPeriodSeconds"`
+	EventPeriodSeconds uint      `yaml:"eventPeriodSeconds"`
 	RedisPassword      string    `yaml:"redisPassword"`
 	RedisHost          string    `yaml:"redisHost"`
 	RedisPort          int       `yaml:"redisPort"`
@@ -120,7 +120,7 @@ func retriveSuriAlerts(ctx context.Context, client *redis.Client, key string) st
 
 func NewMikroticataLoop(config MikroticataConfig) error {
 	ml := &MikroticataLoopControl{
-		ticker:     time.NewTicker(time.Minute * 30),
+		ticker:     time.NewTicker(time.Second * time.Duration(config.EventPeriodSeconds)),
 		cc:         make(chan MikroticataConfig),
 		ec:         nil,
 		ctx:        context.Background(),

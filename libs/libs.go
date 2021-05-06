@@ -21,16 +21,16 @@ const LOG_PATH = "/tmp/mikroticata.log"
 const MIKROTICATA_LIBS_VERSION = "{MIKROTICATA_VERSION}"
 
 type MikroticataConfig struct {
-	BlacklistDuration  string    `yaml:"blacklistDuration"`
-	WhitelistSources   []string  `yaml:"whitelistSources"`
-	WhitelistDests     []string  `yaml:"whitelistDests"`
-	WAN_IP             string    `yaml:"WAN_IP"`
-	EventPeriodSeconds uint      `yaml:"eventPeriodSeconds"`
-	RedisPassword      string    `yaml:"redisPassword"`
-	RedisHost          string    `yaml:"redisHost"`
-	RedisPort          int       `yaml:"redisPort"`
-	RedisDB            int       `yaml:"redisDB"`
-	AlertsRedisKey     string    `yaml:"redisAlertKey"`
+	BlacklistDuration  		string    `yaml:"blacklistDuration"`
+	WhitelistSources   		[]string  `yaml:"whitelistSources"`
+	WhitelistDests     		[]string  `yaml:"whitelistDests"`
+	WAN_IP             		string    `yaml:"WAN_IP"`
+	EventPeriodMilliSeconds uint      `yaml:"eventPeriodMilliSeconds"`
+	RedisPassword      		string    `yaml:"redisPassword"`
+	RedisHost         		string    `yaml:"redisHost"`
+	RedisPort         		int       `yaml:"redisPort"`
+	RedisDB           		int       `yaml:"redisDB"`
+	AlertsRedisKey     		string    `yaml:"redisAlertKey"`
 }
 
 type MikroticataLoopControl struct {
@@ -146,7 +146,7 @@ func retriveSuriAlerts(ctx context.Context, client *redis.Client, key string) ([
 
 func NewMikroticataLoop(config MikroticataConfig) error {
 	ml := &MikroticataLoopControl{
-		ticker:     time.NewTicker(time.Second * time.Duration(config.EventPeriodSeconds)),
+		ticker:     time.NewTicker(time.Millisecond * time.Duration(config.EventPeriodMilliSeconds)),
 		config:     config,
 		ctx:        context.Background(),
 		err:        make(chan error),

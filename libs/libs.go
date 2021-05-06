@@ -1,6 +1,7 @@
 package libs
 
 import (
+	"encoding/json"
 	"fmt"
 	"io"
 	"io/ioutil"
@@ -34,15 +35,15 @@ type MikroticataConfig struct {
 
 type MikroticataLoopControl struct {
 	ticker   *time.Ticker
-	cc       chan MikroticataConfig
-	ec       chan error
 	config   MikroticataConfig
+	err      chan error
 	rdb      *redis.Client
 	ctx	     context.Context
 }
 
 type SuriAlert struct {
-
+	SourceIP string   `json:"src_ip"`
+	DestIP   string   `json:"dest_ip"`
 }
 
 func init() {
@@ -114,17 +115,41 @@ func ParseConfig(path string) (MikroticataConfig, error) {
 	return mikroticataConfig, nil
 }
 
-func retriveSuriAlerts(ctx context.Context, client *redis.Client, key string) string {
-	value := client.GetRange(ctx, key, 0, -1)
-	return value.Val()
+func retriveSuriAlerts(ctx context.Context, client *redis.Client, key string) ([]SuriAlert,error) {
+	value := client.Ping(ctx)
+	if value.Err() != nil {
+		return []SuriAlert{}, value.Err()
+	}
+
+	values := client.LRange(ctx, key, 0, -1)
+	if values.Err() != nil {
+		return []SuriAlert{}, values.Err()
+	}
+
+	client.Del(ctx, key)
+
+	var suricataAlerts []SuriAlert
+	for _, jsonAlert := range values.Val() {
+		var suricataAlert SuriAlert
+
+		err := json.Unmarshal([]byte(jsonAlert), &suricataAlert)
+		if err != nil {
+			Log(log.ErrorLevel, "Error unmashaling Suricata event into struct: " + err.Error())
+			continue
+		}
+
+		suricataAlerts = append(suricataAlerts, suricataAlert)
+	}
+
+	return suricataAlerts, nil
 }
 
 func NewMikroticataLoop(config MikroticataConfig) error {
 	ml := &MikroticataLoopControl{
 		ticker:     time.NewTicker(time.Second * time.Duration(config.EventPeriodSeconds)),
-		cc:         make(chan MikroticataConfig),
-		ec:         nil,
+		config:     config,
 		ctx:        context.Background(),
+		err:        make(chan error),
 		rdb:        redis.NewClient(&redis.Options{
 			Addr:     config.RedisHost + ":" + strconv.Itoa(config.RedisPort),
 			Password: config.RedisPassword,
@@ -140,22 +165,18 @@ func NewMikroticataLoop(config MikroticataConfig) error {
 
 	go ml.run()
 
-	err := <-ml.ec
-	return err
+	return <-ml.err
 }
 
-func (l *MikroticataLoopControl) run() {
+func (l MikroticataLoopControl) run()  {
 	for {
 		select {
 			case <-l.ticker.C:
-				suriAlerts := retriveSuriAlerts(l.ctx, l.rdb, l.config.AlertsRedisKey)
+				suriAlerts, err := retriveSuriAlerts(l.ctx, l.rdb, l.config.AlertsRedisKey)
+				if err != nil {
+					l.err <- err
+				}
 				fmt.Println(suriAlerts)
-			case u := <-l.cc:
-				l.config = u
 		}
 	}
-}
-
-func (l *MikroticataLoopControl) UpdateConfig(u MikroticataConfig) {
-	l.cc <- u
 }

@@ -7,6 +7,7 @@ import (
 	"gitlab.com/MatteoManzoni/go-mikroticata/libs"
 	"os"
 	"os/signal"
+	"runtime"
 )
 
 func main() {
@@ -25,6 +26,8 @@ func main() {
 	}
 
 	libs.Log(log.InfoLevel, "Loaded mikroticata config: " + string(b))
+
+	runtime.GOMAXPROCS(runtime.NumCPU() + 1)
 
 	c := make(chan os.Signal, 1)
 	signal.Notify(c, os.Interrupt)

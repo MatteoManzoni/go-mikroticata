@@ -1,6 +1,7 @@
 package libs
 
 import (
+	"crypto/tls"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -13,14 +14,22 @@ import (
 	"path/filepath"
 	"runtime"
 	"strconv"
+	"strings"
 	"time"
 	"github.com/go-redis/redis/v8"
 	"golang.org/x/net/context"
+    "github.com/go-resty/resty/v2"
 )
 
 const LOG_PATH = "/tmp/mikroticata.log"
 const MIKROTICATA_LIBS_VERSION = "{MIKROTICATA_VERSION}"
 var privateIPBlocks []*net.IPNet
+
+type toType int32
+const (
+	SOURCE   	toType = 0
+	DESTINATION toType = 1
+)
 
 type MikroticataConfig struct {
 	BlacklistDuration  		string    				`yaml:"blacklistDuration"`
@@ -36,14 +45,17 @@ type MikroticataConfig struct {
 	RedisPort         		int      				`yaml:"redisPort"`
 	RedisDB           		int       				`yaml:"redisDB"`
 	AlertsRedisKey     		string    				`yaml:"redisAlertKey"`
-	TikConfig          		MikrotikConfiguration 	`yaml:"mikrotikConfiguration"`
+	TikConfig          		[]MikrotikConfiguration `yaml:"mikrotikConfigurations"`
 }
 
 type MikrotikConfiguration struct {
-	Name		string `yaml:"name"`
-	Host		string `yaml:"host"`
-	Username	string `yaml:"user"`
-	Password	string `yaml:"password"`
+	Name		 	 	string `yaml:"name"`
+	Host		  		string `yaml:"host"`
+	Username	  		string `yaml:"user"`
+	Password	  		string `yaml:"password"`
+	EnableTLS     		bool   `yaml:"enableTLS"`
+	SkipTLSVerify 		bool   `yaml:"TLSskipVerify"`
+	MirrorRuleComment 	string `yaml:"swiMirrorRuleComment"`
 }
 
 type MikroticataLoopControl struct {
@@ -54,6 +66,13 @@ type MikroticataLoopControl struct {
 	err      				chan error
 	rdb      				*redis.Client
 	ctx	     				context.Context
+}
+
+type MikrotikSwitchRuleConfig struct {
+	ID 				string `json:".id"`
+	TargetChip		string `json:"switch"`
+	TargetPorts		string `json:"ports"`
+	Comment    		string `json:"comment"`
 }
 
 type SuriAlert struct {
@@ -178,7 +197,9 @@ func retriveSuriAlerts(ctx context.Context, client *redis.Client, key string) ([
 
 func cleanBlacklistExpired(config MikroticataConfig) error {
 
-	fmt.Println("CLEANING BLACKLIST")
+	fmt.Println("Get all switch rules")
+	fmt.Println("Check rules comments")
+	fmt.Println("Extract last update timestamp from rules")
 
 	return nil
 }
@@ -215,14 +236,144 @@ func blacklistSuriAlerts(alerts []SuriAlert, config MikroticataConfig) error {
 		if ipIsPrivate(suricataAlert.SourceIP) &&
 			!suricataAlert.DestIP.Equal(config.WAN_IP) &&
 			! isIPBlacklisted(suricataAlert.SourceIP, config.WhitelistSources) {
-				fmt.Println("I'm going to ban this dest IP: " + suricataAlert.DestIP.String())
+				err := blacklistMikrotik(suricataAlert.DestIP, SOURCE, config.TikConfig, config.BlacklistDuration)
+				if err != nil {
+					Log(log.ErrorLevel, "Something went wrong trying to blacklist an IP: "+err.Error())
+				}
 		}
 		if ipIsPrivate(suricataAlert.DestIP) &&
 			! suricataAlert.SourceIP.Equal(config.WAN_IP) &&
 			! isIPBlacklisted(suricataAlert.DestIP, config.WhitelistDests) {
-			fmt.Println("I'm going to ban this source IP: " + suricataAlert.SourceIP.String())
+				err := blacklistMikrotik(suricataAlert.SourceIP, DESTINATION, config.TikConfig, config.BlacklistDuration)
+				if err != nil {
+					Log(log.ErrorLevel, "Something went wrong trying to blacklist an IP: "+err.Error())
+				}
 		}
 	}
+
+	return nil
+}
+
+func setupMikrotikRESTClient(config MikrotikConfiguration) *resty.Client {
+	client := resty.New()
+
+	client.SetHeader("Accept", "application/json")
+	client.SetHeaders(map[string]string{
+		"Content-Type": "application/json",
+		"User-Agent": "go-mikroticata " + MIKROTICATA_LIBS_VERSION,
+	})
+	client.SetBasicAuth(config.Username, config.Password)
+	client.SetRetryCount(5).
+		SetRetryWaitTime(1 * time.Second).
+		SetRetryMaxWaitTime(6 * time.Second)
+	client.AddRetryCondition(
+		func(r *resty.Response, err error) bool {
+			return 200 < r.StatusCode() || r.StatusCode() >=300
+		},
+	)
+
+	return client
+}
+
+func blacklistMikrotik(ip net.IP, to toType, switches []MikrotikConfiguration, blacklistDuration string) error {
+
+	var toDirection string
+	var toDirectionQuery string
+	if to == SOURCE {
+		toDirection = "source"
+		toDirectionQuery = "src-address"
+	} else if to == DESTINATION {
+		toDirection = "destination"
+		toDirectionQuery = "dst-address"
+	}
+
+	for _, mikrotik := range switches {
+		var swiHost string
+		if mikrotik.EnableTLS {
+			swiHost = "https://" + mikrotik.Host
+		} else {
+			swiHost = "http://" + mikrotik.Host
+		}
+		swiHost = swiHost + "/rest/"
+
+		restClient := setupMikrotikRESTClient(mikrotik)
+		if mikrotik.SkipTLSVerify {
+			restClient.SetTLSClientConfig(&tls.Config{ InsecureSkipVerify: true })
+		} else {
+			restClient.SetTLSClientConfig(&tls.Config{ InsecureSkipVerify: false })
+		}
+
+		var mirroredPorts []MikrotikSwitchRuleConfig
+		_, err := restClient.R().
+			SetResult(&mirroredPorts).
+			SetQueryParams(map[string]string{
+				"comment": mikrotik.MirrorRuleComment,
+				"mirror": "yes",
+			}).
+			Get(swiHost + "interface/ethernet/switch/rule")
+		if err != nil {
+			Log(log.ErrorLevel, "Cannot retrive mirror rule from " + mikrotik.Name + " target: " + err.Error())
+			continue
+		}
+
+		if len(mirroredPorts) != 1 {
+			Log(log.ErrorLevel, "Cannot find exactly one mirror rule in " + mikrotik.Name + " target")
+			continue
+		}
+
+		var ruleExist []MikrotikSwitchRuleConfig
+		_, err = restClient.R().
+			SetResult(&ruleExist).
+			SetQueryParams(map[string]string{
+				toDirectionQuery: ip.String(),
+				"switch": mirroredPorts[0].TargetChip,
+				"ports": mirroredPorts[0].TargetPorts,
+			}).
+			Get(swiHost + "interface/ethernet/switch/rule")
+		if err != nil {
+			Log(log.ErrorLevel, "Cannot check for rule existance from " + mikrotik.Name + " target: " + err.Error())
+			continue
+		}
+
+		if len(ruleExist) == 1 {
+			if strings.HasPrefix(ruleExist[0].Comment, "MIKROTICATA_") {
+				_, err = restClient.R().
+					SetBody(map[string]interface{}{
+						"comment": "MIKROTICATA_" + strconv.FormatInt(time.Now().UTC().Unix(), 10),
+					}).
+					Patch(swiHost + "interface/ethernet/switch/rule/" + ruleExist[0].ID)
+				if err != nil {
+					Log(log.ErrorLevel, "Cannot patch blacklist update time " + mikrotik.Name + " target: " + err.Error())
+					continue
+				}
+			} else {
+				Log(log.WarnLevel, "The matching rules seems to be not MIKROTICATA managed, I'll do nothing ")
+			}
+		} else if len(ruleExist) == 0 {
+			blockRule := make(map[string]string)
+			blockRule["switch"] 			= mirroredPorts[0].TargetChip
+			blockRule["ports"] 				= mirroredPorts[0].TargetPorts
+			blockRule["copy-to-cpu"] 		= "no"
+			blockRule["redirect-to-cpu"] 	= "no"
+			blockRule["mirror"] 			= "no"
+			blockRule["new-dst-ports"] 		= ""
+			blockRule["comment"] 			= "MIKROTICATA_" + strconv.FormatInt(time.Now().UTC().Unix(), 10)
+			blockRule[toDirectionQuery]		=  ip.String()
+
+			_, err = restClient.R().
+				SetBody(blockRule).
+				Post(swiHost + "interface/ethernet/switch/rule/")
+			if err != nil {
+				Log(log.ErrorLevel, "Cannot create new blacklist rule on " + mikrotik.Name + " target: " + err.Error())
+				continue
+			}
+		} else {
+			Log(log.WarnLevel, "More or negative rules exist on the switch with the same configuration, I'll do nothing ")
+			continue
+		}
+	}
+
+	Log(log.InfoLevel, "Blacklisted " + toDirection + " IP: "+ip.String())
 
 	return nil
 }

@@ -45,7 +45,7 @@ type MikroticataConfig struct {
 	RedisPort         		int      				`yaml:"redisPort"`
 	RedisDB           		int       				`yaml:"redisDB"`
 	AlertsRedisKey     		string    				`yaml:"redisAlertKey"`
-	TikConfig          		[]MikrotikConfiguration `yaml:"mikrotikConfigurations"`
+	TikConfigs         		[]MikrotikConfiguration `yaml:"mikrotikConfigurations"`
 }
 
 type MikrotikConfiguration struct {
@@ -236,7 +236,7 @@ func blacklistSuriAlerts(alerts []SuriAlert, config MikroticataConfig) error {
 		if ipIsPrivate(suricataAlert.SourceIP) &&
 			!suricataAlert.DestIP.Equal(config.WAN_IP) &&
 			! isIPBlacklisted(suricataAlert.SourceIP, config.WhitelistSources) {
-				err := blacklistMikrotik(suricataAlert.DestIP, SOURCE, config.TikConfig, config.BlacklistDuration)
+				err := blacklistMikrotik(suricataAlert.DestIP, SOURCE, config.TikConfigs)
 				if err != nil {
 					Log(log.ErrorLevel, "Something went wrong trying to blacklist an IP: "+err.Error())
 				}
@@ -244,7 +244,7 @@ func blacklistSuriAlerts(alerts []SuriAlert, config MikroticataConfig) error {
 		if ipIsPrivate(suricataAlert.DestIP) &&
 			! suricataAlert.SourceIP.Equal(config.WAN_IP) &&
 			! isIPBlacklisted(suricataAlert.DestIP, config.WhitelistDests) {
-				err := blacklistMikrotik(suricataAlert.SourceIP, DESTINATION, config.TikConfig, config.BlacklistDuration)
+				err := blacklistMikrotik(suricataAlert.SourceIP, DESTINATION, config.TikConfigs)
 				if err != nil {
 					Log(log.ErrorLevel, "Something went wrong trying to blacklist an IP: "+err.Error())
 				}
@@ -275,7 +275,7 @@ func setupMikrotikRESTClient(config MikrotikConfiguration) *resty.Client {
 	return client
 }
 
-func blacklistMikrotik(ip net.IP, to toType, switches []MikrotikConfiguration, blacklistDuration string) error {
+func blacklistMikrotik(ip net.IP, to toType, switches []MikrotikConfiguration) error {
 
 	var toDirection string
 	var toDirectionQuery string
@@ -286,6 +286,8 @@ func blacklistMikrotik(ip net.IP, to toType, switches []MikrotikConfiguration, b
 		toDirection = "destination"
 		toDirectionQuery = "dst-address"
 	}
+
+	Log(log.InfoLevel, "I'm going to blacklist " + toDirection + " IP: "+ip.String())
 
 	for _, mikrotik := range switches {
 		var swiHost string
@@ -304,7 +306,7 @@ func blacklistMikrotik(ip net.IP, to toType, switches []MikrotikConfiguration, b
 		}
 
 		var mirroredPorts []MikrotikSwitchRuleConfig
-		_, err := restClient.R().
+		resp, err := restClient.R().
 			SetResult(&mirroredPorts).
 			SetQueryParams(map[string]string{
 				"comment": mikrotik.MirrorRuleComment,
@@ -312,7 +314,10 @@ func blacklistMikrotik(ip net.IP, to toType, switches []MikrotikConfiguration, b
 			}).
 			Get(swiHost + "interface/ethernet/switch/rule")
 		if err != nil {
-			Log(log.ErrorLevel, "Cannot retrive mirror rule from " + mikrotik.Name + " target: " + err.Error())
+			Log(log.ErrorLevel, "Cannot retrive mirror rule from " + mikrotik.Name + " target, returned an error: " + err.Error())
+			continue
+		} else if resp.StatusCode() < 200 || resp.StatusCode() >=300 {
+			Log(log.ErrorLevel, "Target: " + mikrotik.Name + " returned an invalid code on mirror switch rules retrieval: " + resp.String())
 			continue
 		}
 
@@ -322,7 +327,7 @@ func blacklistMikrotik(ip net.IP, to toType, switches []MikrotikConfiguration, b
 		}
 
 		var ruleExist []MikrotikSwitchRuleConfig
-		_, err = restClient.R().
+		resp, err = restClient.R().
 			SetResult(&ruleExist).
 			SetQueryParams(map[string]string{
 				toDirectionQuery: ip.String(),
@@ -331,23 +336,29 @@ func blacklistMikrotik(ip net.IP, to toType, switches []MikrotikConfiguration, b
 			}).
 			Get(swiHost + "interface/ethernet/switch/rule")
 		if err != nil {
-			Log(log.ErrorLevel, "Cannot check for rule existance from " + mikrotik.Name + " target: " + err.Error())
+			Log(log.ErrorLevel, "Cannot check for rule existence " + mikrotik.Name + " target, returned an error: " + err.Error())
+			continue
+		} else if resp.StatusCode() < 200 || resp.StatusCode() >=300 {
+			Log(log.ErrorLevel, "Target: " + mikrotik.Name + " returned an invalid code on check for switch rules existence: " + resp.String())
 			continue
 		}
 
 		if len(ruleExist) == 1 {
 			if strings.HasPrefix(ruleExist[0].Comment, "MIKROTICATA_") {
-				_, err = restClient.R().
+				resp, err = restClient.R().
 					SetBody(map[string]interface{}{
 						"comment": "MIKROTICATA_" + strconv.FormatInt(time.Now().UTC().Unix(), 10),
 					}).
 					Patch(swiHost + "interface/ethernet/switch/rule/" + ruleExist[0].ID)
 				if err != nil {
-					Log(log.ErrorLevel, "Cannot patch blacklist update time " + mikrotik.Name + " target: " + err.Error())
+					Log(log.ErrorLevel, "Cannot update mirror rule to " + mikrotik.Name + " target, returned an error: " + err.Error())
+					continue
+				} else if resp.StatusCode() < 200 || resp.StatusCode() >=300 {
+					Log(log.ErrorLevel, "Target: " + mikrotik.Name + " returned an invalid code on mirror switch rules update: " + resp.String())
 					continue
 				}
 			} else {
-				Log(log.WarnLevel, "The matching rules seems to be not MIKROTICATA managed, I'll do nothing ")
+				Log(log.WarnLevel, "The matching rules seems to be not MIKROTICATA managed, I'll do nothing on: " + mikrotik.Name)
 			}
 		} else if len(ruleExist) == 0 {
 			blockRule := make(map[string]string)
@@ -360,20 +371,24 @@ func blacklistMikrotik(ip net.IP, to toType, switches []MikrotikConfiguration, b
 			blockRule["comment"] 			= "MIKROTICATA_" + strconv.FormatInt(time.Now().UTC().Unix(), 10)
 			blockRule[toDirectionQuery]		=  ip.String()
 
-			_, err = restClient.R().
+			resp, err = restClient.R().
 				SetBody(blockRule).
 				Post(swiHost + "interface/ethernet/switch/rule/")
 			if err != nil {
-				Log(log.ErrorLevel, "Cannot create new blacklist rule on " + mikrotik.Name + " target: " + err.Error())
+				Log(log.ErrorLevel, "Cannot create block mirror rule to " + mikrotik.Name + " target, returned an error: " + err.Error())
+				continue
+			} else if resp.StatusCode() < 200 || resp.StatusCode() >=300 {
+				Log(log.ErrorLevel, "Target: " + mikrotik.Name + " returned an invalid code on mirror switch rules creation: " + resp.String())
 				continue
 			}
 		} else {
 			Log(log.WarnLevel, "More or negative rules exist on the switch with the same configuration, I'll do nothing ")
 			continue
 		}
+		Log(log.InfoLevel, "[" + mikrotik.Name + "] Blacklisted " + toDirection + " IP: "+ip.String())
 	}
 
-	Log(log.InfoLevel, "Blacklisted " + toDirection + " IP: "+ip.String())
+	Log(log.InfoLevel, "Blacklisted " + toDirection + " IP: "+ip.String() + " on all switch targets")
 
 	return nil
 }

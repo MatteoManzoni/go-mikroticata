@@ -1,0 +1,39 @@
+blacklistDuration: "3h"
+whitelistSources:
+  - "1.1.1.1"
+  - "8.8.8.8"
+whitelistDests:
+  - "1.1.1.1"
+  - "8.8.8.8"
+WAN_IP: ""
+dynamicWAN: false
+dynamicWANRefreshSeconds: 120
+eventPeriodMilliSeconds: 100
+blacklistUpdatePeriodSeconds: 10
+redisPassword: "asdfghjkl"
+redisHost: "127.0.0.1"
+redisPort: 6379
+redisDB: 0
+redisAlertKey: surialerts
+mikrotikConfigurations:
+  - name: "SWI-01-A"
+    host: "swi01-a.home.lan"
+    user: "mikroticata"
+    password: "password"
+    enableTLS: true
+    TLSskipVerify: true
+    swiMirrorRuleComment: "MIKROTICATA_MIRROR_RULE"
+  - name: "SWI-02-B"
+      host: "swi02-b.home.lan"
+      user: "mikroticata"
+      password: "password"
+      enableTLS: false
+      TLSskipVerify: false
+      swiMirrorRuleComment: "MIKROTICATA_MIRROR_RULE"
+  - name: "SWI-ACCESS"
+      host: "swi-access.home.lan"
+      user: "mikroticata"
+      password: "password"
+      enableTLS: true
+      TLSskipVerify: false
+      swiMirrorRuleComment: "MIKROTICATA_MIRROR_RULE"

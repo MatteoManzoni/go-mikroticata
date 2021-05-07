@@ -3,12 +3,45 @@ package handlers
 import (
 	log "github.com/sirupsen/logrus"
 	"gitlab.com/MatteoManzoni/go-mikroticata/core"
+	"gopkg.in/natefinch/lumberjack.v2"
+	"io"
 	"os"
 	"path/filepath"
 	"runtime"
+	"time"
 )
 
-const LOG_PATH = "/tmp/mikroticata.log"
+func SetupLogging(logPath string, fileLogging bool) error {
+
+	customFormatter := new(log.JSONFormatter)
+	customFormatter.TimestampFormat = time.RFC1123
+	log.SetFormatter(customFormatter)
+
+	if fileLogging {
+		err := os.MkdirAll(logPath, os.ModePerm)
+		if err != nil {
+			return err
+		}
+
+		output := &lumberjack.Logger{
+			Filename:   logPath + filepath.Base(os.Args[0]) + ".log",
+			MaxSize:    2,
+			MaxBackups: 1,
+			MaxAge:     5,
+			Compress:   true,
+		}
+
+		ioMW := io.MultiWriter(output, os.Stdout)
+
+		log.SetOutput(ioMW)
+	} else {
+		log.SetOutput(os.Stdout)
+	}
+
+	log.SetLevel(log.InfoLevel)
+
+	return nil
+}
 
 func Log(level log.Level, mgs string) {
 	_, file, line, _ := runtime.Caller(1)

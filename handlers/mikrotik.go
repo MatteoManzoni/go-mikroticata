@@ -209,7 +209,7 @@ func CreateBlockRuleMikrotik(ip net.IP, to core.ToType, switches []core.Mikrotik
 
 			resp, err = restClient.R().
 				SetBody(blockRule).
-				Post(swiHost + "interface/ethernet/switch/rule/")
+				Put(swiHost + "interface/ethernet/switch/rule/")
 			if err != nil {
 				Log(log.ErrorLevel, "Cannot create block mirror rule to " + mikrotik.Name + " target, returned an error: " + err.Error())
 				continue

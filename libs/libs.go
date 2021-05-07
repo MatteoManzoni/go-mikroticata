@@ -195,11 +195,80 @@ func retriveSuriAlerts(ctx context.Context, client *redis.Client, key string) ([
 	return suricataAlerts, nil
 }
 
-func cleanBlacklistExpired(config MikroticataConfig) error {
+func cleanBlacklistExpired(switches []MikrotikConfiguration, blacklistDurationString string) error {
 
 	fmt.Println("Get all switch rules")
 	fmt.Println("Check rules comments")
 	fmt.Println("Extract last update timestamp from rules")
+
+	var blacklistDuration time.Duration
+	blacklistDuration, err := time.ParseDuration(blacklistDurationString)
+	if err != nil {
+		Log(log.ErrorLevel, "Invalid duration string: " + err.Error())
+		Log(log.WarnLevel, "Defaulting to 1h blacklist duration")
+		blacklistDuration = 1 * time.Hour
+	}
+
+	for _, mikrotik := range switches {
+		var swiHost string
+		if mikrotik.EnableTLS {
+			swiHost = "https://" + mikrotik.Host
+		} else {
+			swiHost = "http://" + mikrotik.Host
+		}
+		swiHost = swiHost + "/rest/"
+
+		restClient := setupMikrotikRESTClient(mikrotik)
+		if mikrotik.SkipTLSVerify {
+			restClient.SetTLSClientConfig(&tls.Config{InsecureSkipVerify: true})
+		} else {
+			restClient.SetTLSClientConfig(&tls.Config{InsecureSkipVerify: false})
+		}
+
+		var switchRules []MikrotikSwitchRuleConfig
+		resp, err := restClient.R().
+			SetResult(&switchRules).
+			SetQueryParams(map[string]string{
+				"mirror": "no",
+			}).
+			Get(swiHost + "interface/ethernet/switch/rule")
+		if err != nil {
+			Log(log.ErrorLevel, "Cannot retrieve non-mirror rules from " + mikrotik.Name + " target, returned an error: " + err.Error())
+			continue
+		} else if resp.StatusCode() < 200 || resp.StatusCode() >=300 {
+			Log(log.ErrorLevel, "Target: " + mikrotik.Name + " returned an invalid code on non-mirror rules retrieval: " + resp.String())
+			continue
+		}
+
+		for _, rule := range switchRules {
+			if strings.HasPrefix(rule.Comment, "MIKROTICATA_") {
+
+				creationUnixTSstring := strings.TrimPrefix(rule.Comment, "MIKROTICATA_")
+				creationUnixTS, err := strconv.ParseInt(creationUnixTSstring, 10, 64)
+				if err != nil {
+					Log(log.ErrorLevel, "Invalid string TS to I64 TS: " + err.Error())
+					continue
+				}
+				creationTime := time.Unix(creationUnixTS, 0)
+				deletionTime := creationTime.Add(blacklistDuration)
+
+				if deletionTime.Before(time.Now()) {
+					Log(log.InfoLevel, "[" + mikrotik.Name + "] I'm going to remove the rule ID: " + rule.ID + " with comment: " + rule.Comment)
+
+					resp, err := restClient.R().
+						SetResult(&switchRules).
+						Delete(swiHost + "interface/ethernet/switch/rule/" + rule.ID)
+					if err != nil {
+						Log(log.ErrorLevel, "Cannot delete expired rule: " + rule.ID + " from " + mikrotik.Name + " target, returned an error: " + err.Error())
+					} else if resp.StatusCode() < 200 || resp.StatusCode() >=300 {
+						Log(log.ErrorLevel, "Target: " + mikrotik.Name + " returned an invalid code on non-mirror rules retrieval: " + resp.String())
+					}
+
+					Log(log.InfoLevel, "[" + mikrotik.Name + "] Removed expired rule: " + rule.ID + " with comment: " + rule.Comment)
+				}
+			}
+		}
+	}
 
 	return nil
 }
@@ -432,7 +501,7 @@ func (l MikroticataLoopControl) run()  {
 					l.err <- err
 				}
 		    case <-l.blacklistCleanerTicker.C:
-			    err := cleanBlacklistExpired(l.config)
+			    err := cleanBlacklistExpired(l.config.TikConfigs, l.config.BlacklistDuration)
 				if err != nil {
 					l.err <- err
 				}

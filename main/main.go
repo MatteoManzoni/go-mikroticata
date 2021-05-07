@@ -13,8 +13,11 @@ import (
 
 func main() {
 
-	configPath := flag.String("config", "/etc/mikroticata.yaml", "Path of the mikroticata confg file")
+	configPath := flag.String("config", "/etc/mikroticata.yaml", "(Optional, default to /etc/mikroticata.yaml) Path of the mikroticata confg file")
+	logPath := flag.String("logFile", "", "(Optional, default to stdout only) Path of the file to log to")
 	flag.Parse()
+
+	err := handlers.SetupLogging(*logPath, *logPath == "")
 
 	mikroticataConfig, err := core.ParseConfig(*configPath)
 	if err != nil {

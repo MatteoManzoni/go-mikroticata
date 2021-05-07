@@ -2,44 +2,15 @@ package handlers
 
 import (
 	"fmt"
-	log "github.com/sirupsen/logrus"
-	"gopkg.in/natefinch/lumberjack.v2"
-	"io"
 	"io/ioutil"
 	"net"
 	"net/http"
-	"os"
-	"path/filepath"
-	"time"
 )
 
 var privateIPBlocks []*net.IPNet
 const PUBIP_RESOLVE_ENDPOINT = "https://api.ipify.org?format=text"
 
 func init() {
-	err := os.MkdirAll(LOG_PATH, os.ModePerm)
-	if err != nil {
-		panic(err)
-	}
-
-	customFormatter := new(log.JSONFormatter)
-	customFormatter.TimestampFormat = time.RFC1123
-	log.SetFormatter(customFormatter)
-
-	output := &lumberjack.Logger{
-		Filename:   LOG_PATH + filepath.Base(os.Args[0]) + ".log",
-		MaxSize:    2,
-		MaxBackups: 1,
-		MaxAge:     5,
-		Compress:   true,
-	}
-
-	ioMW := io.MultiWriter(output, os.Stdout)
-
-	log.SetOutput(ioMW)
-
-	log.SetLevel(log.InfoLevel)
-
 	for _, cidr := range []string{
 		"127.0.0.0/8",    // IPv4 loopback
 		"10.0.0.0/8",     // RFC1918

@@ -79,9 +79,8 @@ func CleanExpiredBlockRules(switches []core.MikrotikConfiguration, blacklistDura
 		}
 
 		for _, rule := range switchRules {
-			if strings.HasPrefix(rule.Comment, "MIKROTICATA_") {
-
-				creationUnixTSstring := strings.TrimPrefix(rule.Comment, "MIKROTICATA_")
+			if strings.HasPrefix(rule.Comment, "MANAGED_BY_MIKROTICATA_") {
+				creationUnixTSstring := strings.TrimPrefix(rule.Comment, "MANAGED_BY_MIKROTICATA_")
 				creationUnixTS, err := strconv.ParseInt(creationUnixTSstring, 10, 64)
 				if err != nil {
 					Log(log.ErrorLevel, "Invalid string TS to I64 TS: " + err.Error())
@@ -180,10 +179,10 @@ func CreateBlockRuleMikrotik(ip net.IP, to core.ToType, switches []core.Mikrotik
 		}
 
 		if len(ruleExist) == 1 {
-			if strings.HasPrefix(ruleExist[0].Comment, "MIKROTICATA_") {
+			if strings.HasPrefix(ruleExist[0].Comment, "MANAGED_BY_MIKROTICATA_") {
 				resp, err = restClient.R().
 					SetBody(map[string]interface{}{
-						"comment": "MIKROTICATA_" + strconv.FormatInt(time.Now().UTC().Unix(), 10),
+						"comment": "MANAGED_BY_MIKROTICATA_" + strconv.FormatInt(time.Now().UTC().Unix(), 10),
 					}).
 					Patch(swiHost + "interface/ethernet/switch/rule/" + ruleExist[0].ID)
 				if err != nil {
@@ -204,7 +203,7 @@ func CreateBlockRuleMikrotik(ip net.IP, to core.ToType, switches []core.Mikrotik
 			blockRule["redirect-to-cpu"] 	= "no"
 			blockRule["mirror"] 			= "no"
 			blockRule["new-dst-ports"] 		= ""
-			blockRule["comment"] 			= "MIKROTICATA_" + strconv.FormatInt(time.Now().UTC().Unix(), 10)
+			blockRule["comment"] 			= "MANAGED_BY_MIKROTICATA_" + strconv.FormatInt(time.Now().UTC().Unix(), 10)
 			blockRule[toDirectionQuery]		=  ip.String()
 
 			resp, err = restClient.R().

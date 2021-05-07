@@ -21,7 +21,7 @@ type MikroticataConfig struct {
 	DynamicWAN				bool                    `yaml:"dynamicWAN"`
 	EventPeriodMilliSeconds uint      				`yaml:"eventPeriodMilliSeconds"`
 	SWIUpdPeriodSeconds     uint      				`yaml:"blacklistUpdatePeriodSeconds"`
-	WanRefreshPeriodSeconds uint      				`yaml:"dynamicWANRefresh"`
+	WanRefreshPeriodSeconds uint      				`yaml:"dynamicWANRefreshSeconds"`
 	RedisPassword      		string    				`yaml:"redisPassword"`
 	RedisHost         		string    				`yaml:"redisHost"`
 	RedisPort         		int      				`yaml:"redisPort"`

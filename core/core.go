@@ -95,7 +95,7 @@ func NewMikroticataLoop(config MikroticataConfig) error {
 	ml := &MikroticataLoopControl{
 		redisTicker:    		time.NewTicker(time.Millisecond * time.Duration(config.EventPeriodMilliSeconds)),
 		blacklistCleanerTicker:	time.NewTicker(time.Second * time.Duration(config.SWIUpdPeriodSeconds)),
-		dynWanRefreshTicker:	time.NewTicker(time.Second * time.Duration(config.SWIUpdPeriodSeconds)),
+		dynWanRefreshTicker:	time.NewTicker(time.Second * time.Duration(config.WanRefreshPeriodSeconds)),
 		config:     			config,
 		ctx:        			context.Background(),
 		err:        			make(chan error),
@@ -118,22 +118,38 @@ func NewMikroticataLoop(config MikroticataConfig) error {
 }
 
 func (l MikroticataLoopControl) run()  {
+
+	var err error
+	if l.config.DynamicWAN {
+		l.config.WAN_IP, err = handlers.RetriveWanIP()
+		if err != nil {
+			l.err <- err
+		}
+	}
+
 	for {
 		select {
-			case <-l.redisTicker.C:
-				suriAlerts, err := retriveSuriAlerts(l.ctx, l.rdb, l.config.AlertsRedisKey)
+		case <-l.redisTicker.C:
+			suriAlerts, err := retriveSuriAlerts(l.ctx, l.rdb, l.config.AlertsRedisKey)
+			if err != nil {
+				l.err <- err
+			}
+			err = blacklistSuriAlerts(suriAlerts,l.config)
+			if err != nil {
+				l.err <- err
+			}
+		case <-l.blacklistCleanerTicker.C:
+		    err := handlers.CleanExpiredBlockRules(l.config.TikConfigs, l.config.BlacklistDuration)
+			if err != nil {
+				l.err <- err
+			}
+		case <-l.dynWanRefreshTicker.C:
+			if l.config.DynamicWAN {
+				l.config.WAN_IP, err = handlers.RetriveWanIP()
 				if err != nil {
-					l.err <- err
+					handlers.Log(log.ErrorLevel, "An error occurred during the retrieval of the updated WAN IP: " + err.Error() + ", I'm gonna keep last value")
 				}
-				err = blacklistSuriAlerts(suriAlerts,l.config)
-				if err != nil {
-					l.err <- err
-				}
-		    case <-l.blacklistCleanerTicker.C:
-			    err := handlers.CleanExpiredBlockRules(l.config.TikConfigs, l.config.BlacklistDuration)
-				if err != nil {
-					l.err <- err
-				}
+			}
 		}
 	}
 }

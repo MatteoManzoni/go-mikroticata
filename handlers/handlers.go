@@ -5,13 +5,16 @@ import (
 	log "github.com/sirupsen/logrus"
 	"gopkg.in/natefinch/lumberjack.v2"
 	"io"
+	"io/ioutil"
 	"net"
+	"net/http"
 	"os"
 	"path/filepath"
 	"time"
 )
 
 var privateIPBlocks []*net.IPNet
+const PUBIP_RESOLVE_ENDPOINT = "https://api.ipify.org?format=text"
 
 func init() {
 	err := os.MkdirAll(LOG_PATH, os.ModePerm)
@@ -75,4 +78,22 @@ func IsIpBlacklisted(ip net.IP, blacklist []net.IP) bool {
 		}
 	}
 	return false
+}
+
+func RetriveWanIP() (net.IP, error) {
+
+	resp, err := http.Get(PUBIP_RESOLVE_ENDPOINT)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	ipString, err := ioutil.ReadAll(resp.Body)
+	if err != nil {
+		return nil, err
+	}
+
+	ip := net.ParseIP(string(ipString))
+
+	return ip, nil
 }

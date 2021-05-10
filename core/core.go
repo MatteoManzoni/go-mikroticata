@@ -2,6 +2,7 @@ package core
 
 import (
 	"encoding/json"
+	"errors"
 	"github.com/go-redis/redis/v8"
 	log "github.com/sirupsen/logrus"
 	"gitlab.com/MatteoManzoni/go-mikroticata/handlers"
@@ -150,6 +151,8 @@ func (l MikroticataLoopControl) run()  {
 					handlers.Log(log.ErrorLevel, "An error occurred during the retrieval of the updated WAN IP: " + err.Error() + ", I'm gonna keep last value")
 				}
 			}
+		case <-l.ctx.Done():
+			l.err <- errors.New("context done")
 		}
 	}
 }
